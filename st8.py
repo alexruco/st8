@@ -985,7 +985,8 @@ def main():
     parser = argparse.ArgumentParser(
         prog="st8",
         description="ST8 - Minimalist State-Based Versioning for Solo Developers",
-        epilog="Your working directory is the dev state. Snapshots are stored in .st8/"
+        epilog="Your working directory is the dev state. All snapshots stored in .st8/"
+        
     )
     parser.add_argument("--version", action="version", version=f"st8 {__version__}")
 
