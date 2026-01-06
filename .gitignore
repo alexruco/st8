@@ -7,6 +7,8 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+.st8
+.claude
 .Python
 build/
 develop-eggs/
