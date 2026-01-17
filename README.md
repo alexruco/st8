@@ -174,6 +174,21 @@ Show statistics.
 st8 stats
 ```
 
+### `st8 global`
+Show or export global task data aggregated from all ST8-managed projects. This command can be run from anywhere (doesn't require ST8 initialization).
+
+```bash
+st8 global              # Human-readable summary
+st8 global --json       # JSON output to stdout
+st8 global --export data.json  # Export to file
+st8 global --verbose    # Show recent tasks per project
+```
+
+Options:
+- `--json` - Output raw JSON to stdout
+- `--export <file>` - Export data to specified file
+- `--verbose` - Show detailed task list per project
+
 ### `st8 sync`
 Sync working directory from stage or prod.
 
@@ -859,6 +874,39 @@ Promoted to stage as v1.2.0 (3.2% changed)
     "status": "stopped"
   }
 ]
+```
+
+### global_tasks.json
+Centralized task data from all ST8-managed projects. Stored as a sibling to `st8.py` (in the ST8 installation directory).
+
+```json
+{
+  "projects": {
+    "/path/to/project1": {
+      "name": "Project One",
+      "tasks": [
+        {
+          "task_id": "20260115_143022",
+          "event": "start",
+          "timestamp": "2026-01-15T14:30:22Z",
+          "message": "Working on feature X"
+        },
+        {
+          "task_id": "20260115_143022",
+          "event": "stop",
+          "timestamp": "2026-01-15T16:45:00Z",
+          "duration_seconds": 8078,
+          "outcome": "finalized"
+        }
+      ]
+    }
+  },
+  "summary": {
+    "total_tasks": 15,
+    "total_time_seconds": 54000,
+    "last_updated": "2026-01-17T18:20:00Z"
+  }
+}
 ```
 
 ## Example Workflow
