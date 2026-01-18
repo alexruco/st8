@@ -505,6 +505,93 @@ You can also add exclude patterns in a `.st8ignore` file at your project root (g
 .env.local
 ```
 
+### Deploy Profiles
+
+Deploy profiles allow you to save and reuse deployment configurations across multiple projects. Profiles are stored globally (in the same directory as `st8.py`) and can be applied when initializing new projects.
+
+#### `st8 profile`
+Manage global deploy profiles.
+
+```bash
+st8 profile              # List all profiles
+st8 profile list         # List all profiles
+st8 profile add <name>   # Add a new profile
+st8 profile remove <name> # Remove a profile
+st8 profile show <name>   # Show profile details
+```
+
+#### Adding a Profile
+
+```bash
+st8 profile add ricarela \
+  --protocol ftp \
+  --host 68.66.248.49 \
+  --port 21 \
+  --username "alex.alex.pt@ricarela.info" \
+  --password "yourpassword" \
+  --remote-path "/dev/dev.ruco.pt/wp-content/plugins"
+
+st8 profile add samuel \
+  --protocol ftp \
+  --host 68.66.333.49 \
+  --port 21 \
+  --username "alex.samuel.pt@samuel.info" \
+  --password "yourpassword" \
+  --remote-path "/dev/dev.samuel.pt/wp-content/plugins"
+```
+
+#### Using Profiles During Init
+
+When you run `st8 init` in a new project, ST8 checks for existing deploy profiles:
+
+- **One profile**: Applied automatically
+- **Multiple profiles**: You'll be asked to choose which one to use
+
+```bash
+$ st8 init "My New Plugin"
+
+Deploy Profiles
+----------------------------------------
+Found 2 deploy profile(s):
+  [1] ricarela (68.66.248.49)
+  [2] samuel (68.66.333.49)
+  [0] None (skip profile)
+Choose profile [1-2, 0 to skip]: 1
+Using deploy profile: ricarela
+
+Initialized ST8: My New Plugin
+...
+```
+
+The selected profile's settings (host, protocol, port, username, password, remote_path) are copied to all environments (dev, stg, prod) in the project's `deploy.json`.
+
+#### Profile Storage
+
+Profiles are stored in `deploy_profiles.json` in the ST8 installation directory (next to `st8.py`). This file is shared across all your projects.
+
+```json
+{
+  "profiles": {
+    "ricarela": {
+      "protocol": "ftp",
+      "host": "68.66.248.49",
+      "port": 21,
+      "username": "alex.alex.pt@ricarela.info",
+      "password": "yourpassword",
+      "remote_path": "/dev/dev.ruco.pt/wp-content/plugins"
+    },
+    "samuel": {
+      "protocol": "ftp",
+      "host": "68.66.333.49",
+      "port": 21,
+      "username": "alex.samuel.pt@samuel.info",
+      "password": "yourpassword",
+      "remote_path": "/dev/dev.samuel.pt/wp-content/plugins"
+    }
+  }
+}
+```
+
 ### Deploy Configuration
 
 Edit `.st8/deploy.json` to configure remote deployment.
@@ -675,7 +762,7 @@ AI-assisted development workflow that:
 1. Creates a task with AI-generated description (or resumes existing task)
 2. Invokes an AI agent (Claude Code, aider, etc.) with your prompt
 3. Generates a commit message from the changes
-4. Offers human review: abort, stop, or promote
+4. Offers human review: abort or promote (then choose: keep, finalize, or undo)
 
 ```bash
 # Basic usage - invoke Claude Code with a prompt
@@ -815,15 +902,22 @@ Generating commit message...
 
 Review Options:
   [1] Abort   - Discard all changes, restore snapshot
-  [2] Stop    - Keep changes, return task to backlog
-  [3] Promote - Keep changes, promote to stage
-  [4] Edit    - Edit commit message, then promote
+  [2] Promote - Promote changes to stage
 
-Choice [1-4]: 3
+Choice [1-2]: 2
 
-Finalizing task...
 Promoting to stage...
 Promoted to stage as v1.2.0 (3.2% changed)
+
+What would you like to do now?
+  [1] Stop and keep     - Pause task, return to backlog
+  [2] Stop and finalize - Complete task permanently
+  [3] Abort than promote - Undo: restore snapshot (revert changes)
+
+Choice [1-3]: 2
+
+Finalizing task...
+Task 20260115_143022 STOPPED and FINALIZED.
 ```
 
 ## Data Formats

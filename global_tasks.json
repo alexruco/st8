@@ -27,13 +27,26 @@
           "finalized": true,
           "timestamp": "2026-01-17T20:39:14.068875+00:00",
           "disposal": "delete"
+        },
+        {
+          "event_type": "start",
+          "task_id": "20260117_205041",
+          "message": "Implement AI workflow enhancements and report on progress.",
+          "tags": [],
+          "started_at": "2026-01-17T20:50:41.509490+00:00",
+          "finished_at": null,
+          "duration_seconds": null,
+          "finalized": false,
+          "timestamp": "2026-01-17T20:50:41.513694+00:00",
+          "files_count": 55,
+          "from_backlog": null
         }
       ]
     }
   },
   "summary": {
-    "total_tasks": 1,
+    "total_tasks": 2,
     "total_time_seconds": 2046.00964,
-    "last_updated": "2026-01-17T20:39:14.068889+00:00"
+    "last_updated": "2026-01-17T20:50:41.513706+00:00"
   }
 }

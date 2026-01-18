@@ -12,6 +12,7 @@ All snapshots and metadata are stored inside .st8/
 """
 
 import argparse
+import copy
 import ftplib
 import hashlib
 import json
@@ -27,7 +28,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"
 
 # =============================================================================
 # Constants and Defaults
@@ -46,6 +47,7 @@ HOTFIXES_DIR = "hotfixes"
 MISSION_FILE = "MISSION.md"
 REPORT_FILE = "REPORT.md"
 GLOBAL_TASKS_FILE = "global_tasks.json"  # Centralized tasks file (sibling to st8.py)
+DEPLOY_PROFILES_FILE = "deploy_profiles.json"  # Centralized deploy profiles (sibling to st8.py)
 
 # Performance optimization: skip diff calculation for files larger than this
 MAX_DIFF_SIZE = 10 * 1024 * 1024  # 10MB
@@ -790,6 +792,99 @@ def save_global_tasks(data: dict) -> None:
         f.write("\n")
 
 
+# =============================================================================
+# Deploy Profiles - Global Templates
+# =============================================================================
+
+def get_deploy_profiles_path() -> Path:
+    """Get path to the centralized deploy_profiles.json file."""
+    return get_st8_install_dir() / DEPLOY_PROFILES_FILE
+
+
+def load_deploy_profiles() -> dict:
+    """
+    Load deploy profiles from the centralized file.
+
+    Structure:
+    {
+        "profiles": {
+            "profile_name": {
+                "protocol": "ftp",
+                "host": "example.com",
+                "port": 21,
+                "username": "user",
+                "password": "pass",
+                "remote_path": "/path/to/deploy"
+            }
+        }
+    }
+    """
+    path = get_deploy_profiles_path()
+    if path.exists():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {"profiles": {}}
+
+
+def save_deploy_profiles(data: dict) -> None:
+    """Save deploy profiles to the centralized file."""
+    path = get_deploy_profiles_path()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+
+
+def add_deploy_profile(name: str, profile: dict) -> None:
+    """Add or update a deploy profile."""
+    data = load_deploy_profiles()
+    data["profiles"][name] = profile
+    save_deploy_profiles(data)
+
+
+def remove_deploy_profile(name: str) -> bool:
+    """Remove a deploy profile. Returns True if removed, False if not found."""
+    data = load_deploy_profiles()
+    if name in data["profiles"]:
+        del data["profiles"][name]
+        save_deploy_profiles(data)
+        return True
+    return False
+
+
+def get_deploy_profile(name: str) -> Optional[dict]:
+    """Get a specific deploy profile by name."""
+    data = load_deploy_profiles()
+    return data["profiles"].get(name)
+
+
+def list_deploy_profiles() -> Dict[str, dict]:
+    """List all deploy profiles."""
+    data = load_deploy_profiles()
+    return data.get("profiles", {})
+
+
+def apply_profile_to_deploy_config(profile: dict, deploy_config: dict) -> dict:
+    """
+    Apply a deploy profile to a deploy config.
+
+    Copies profile settings to all environments (dev, stg, prod).
+    """
+    config = deploy_config.copy()
+
+    for env_name in ["dev", "stg", "prod"]:
+        if env_name in config.get("environments", {}):
+            env = config["environments"][env_name]
+            # Copy profile fields to environment
+            for key in ["protocol", "host", "port", "username", "password", "remote_path"]:
+                if key in profile:
+                    env[key] = profile[key]
+
+    return config
+
+
 def record_global_task_event(
     root: Path,
     event_type: str,
@@ -1321,8 +1416,46 @@ def cmd_init(args) -> int:
     # Write empty history
     save_json(paths["history"], [])
 
-    # Write deploy config (optional feature, disabled by default)
-    save_json(paths["deploy"], DEFAULT_DEPLOY_CONFIG)
+    # Write deploy config - check for deploy profiles first
+    deploy_config = copy.deepcopy(DEFAULT_DEPLOY_CONFIG)
+    profiles = list_deploy_profiles()
+    selected_profile = None
+
+    if profiles:
+        profile_names = list(profiles.keys())
+        if len(profile_names) == 1:
+            # Only one profile, use it automatically
+            profile_name = profile_names[0]
+            selected_profile = profiles[profile_name]
+            print(f"Using deploy profile: {profile_name}")
+        else:
+            # Multiple profiles, ask user to choose
+            print("")
+            print("Deploy Profiles")
+            print("-" * 40)
+            print(f"Found {len(profile_names)} deploy profile(s):")
+            for i, name in enumerate(profile_names, 1):
+                profile = profiles[name]
+                host = profile.get("host", "")
+                print(f"  [{i}] {name} ({host})")
+            print(f"  [0] None (skip profile)")
+
+            try:
+                choice = input(f"Choose profile [1-{len(profile_names)}, 0 to skip]: ").strip()
+                if choice and choice != "0":
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(profile_names):
+                        profile_name = profile_names[idx]
+                        selected_profile = profiles[profile_name]
+                        print(f"Using deploy profile: {profile_name}")
+            except (ValueError, KeyboardInterrupt, EOFError):
+                print("Skipping deploy profile.")
+            print("")
+
+    if selected_profile:
+        deploy_config = apply_profile_to_deploy_config(selected_profile, deploy_config)
+
+    save_json(paths["deploy"], deploy_config)
 
     # Write MISSION.md and REPORT.md templates
     with open(paths["mission"], "w", encoding="utf-8") as f:
@@ -2534,21 +2667,19 @@ Commit message:"""
     print("")
 
     # =========================================================================
-    # Step 4: Human Review
+    # Step 4: Human Review - Two-Phase Workflow
     # =========================================================================
 
     print("Review Options:")
     print("  [1] Abort   - Discard all changes, restore snapshot")
-    print("  [2] Stop    - Keep changes, return task to backlog")
-    print("  [3] Promote - Keep changes, promote to stage")
-    print("  [4] Edit    - Edit commit message, then promote")
+    print("  [2] Promote - Promote changes to stage")
     print("")
 
     while True:
-        choice = input("Choice [1-4]: ").strip()
+        choice = input("Choice [1-2]: ").strip()
 
         if choice == "1":
-            # Abort
+            # Abort - just abort and done
             print("")
             class TaskAbortArgs:
                 def __init__(self):
@@ -2558,42 +2689,7 @@ Commit message:"""
             return cmd_task_abort(TaskAbortArgs())
 
         elif choice == "2":
-            # Stop (return to backlog)
-            print("")
-            class TaskStopArgs:
-                def __init__(self):
-                    self.finalize = False
-                    self.delete = False
-                    self.archive = False
-                    self.message = [commit_message]
-                    self.force = True
-
-            return cmd_task_stop(TaskStopArgs())
-
-        elif choice == "3" or choice == "4":
-            # Edit message if choice 4
-            if choice == "4":
-                print(f"\nCurrent message: {commit_message}")
-                new_message = input("New message (Enter to keep): ").strip()
-                if new_message:
-                    commit_message = new_message
-                print("")
-
-            # Finalize task first
-            print("Finalizing task...")
-            class TaskStopArgs:
-                def __init__(self):
-                    self.finalize = True
-                    self.delete = True
-                    self.archive = False
-                    self.message = [commit_message]
-                    self.force = True
-
-            result = cmd_task_stop(TaskStopArgs())
-            if result != 0:
-                return result
-
-            # Promote if not --no-promote
+            # Promote - promote without stopping the task first
             if not args.no_promote:
                 print("")
                 print("Promoting to stage...")
@@ -2604,13 +2700,67 @@ Commit message:"""
                         self.minor = False
                         self.patch = False
 
-                return cmd_promote(PromoteArgs())
+                result = cmd_promote(PromoteArgs())
+                if result != 0:
+                    return result
             else:
+                print("")
                 print("Skipping promotion (--no-promote)")
-                return 0
+
+            # Phase 2: After promotion, ask what to do with the task
+            print("")
+            print("What would you like to do now?")
+            print("  [1] Stop and keep     - Pause task, return to backlog")
+            print("  [2] Stop and finalize - Complete task permanently")
+            print("  [3] Abort than promote - Undo: restore snapshot (revert changes)")
+            print("")
+
+            while True:
+                phase2_choice = input("Choice [1-3]: ").strip()
+
+                if phase2_choice == "1":
+                    # Stop and keep (return to backlog)
+                    print("")
+                    class TaskStopArgs:
+                        def __init__(self):
+                            self.finalize = False
+                            self.delete = False
+                            self.archive = False
+                            self.message = [commit_message]
+                            self.force = True
+
+                    return cmd_task_stop(TaskStopArgs())
+
+                elif phase2_choice == "2":
+                    # Stop and finalize
+                    print("")
+                    print("Finalizing task...")
+                    class TaskStopArgs:
+                        def __init__(self):
+                            self.finalize = True
+                            self.delete = True
+                            self.archive = False
+                            self.message = [commit_message]
+                            self.force = True
+
+                    return cmd_task_stop(TaskStopArgs())
+
+                elif phase2_choice == "3":
+                    # Abort than promote - undo by restoring from snapshot
+                    print("")
+                    print("Reverting changes by restoring from snapshot...")
+                    class TaskAbortArgs:
+                        def __init__(self):
+                            self.message = ["Undo: restored after promotion"]
+                            self.force = True
+
+                    return cmd_task_abort(TaskAbortArgs())
+
+                else:
+                    print("Invalid choice. Enter 1, 2, or 3.")
 
         else:
-            print("Invalid choice. Enter 1, 2, 3, or 4.")
+            print("Invalid choice. Enter 1 or 2.")
 
 
 # =============================================================================
@@ -4606,6 +4756,121 @@ def cmd_global(args) -> int:
     return 0
 
 
+def cmd_profile(args) -> int:
+    """
+    Manage global deploy profiles.
+    Can be run from any directory (doesn't require ST8 initialization).
+    """
+    subcommand = args.profile_command
+
+    if subcommand == "list" or subcommand is None:
+        # List all profiles
+        profiles = list_deploy_profiles()
+
+        if not profiles:
+            print("No deploy profiles found.")
+            print("")
+            print(f"Profiles file: {get_deploy_profiles_path()}")
+            print("")
+            print("Add a profile with:")
+            print("  st8 profile add <name> --host <host> --username <user> [options]")
+            return 0
+
+        print("Deploy Profiles")
+        print("=" * 60)
+        print("")
+
+        for name, profile in sorted(profiles.items()):
+            protocol = profile.get("protocol", "ssh")
+            host = profile.get("host", "")
+            port = profile.get("port", 22 if protocol == "ssh" else 21)
+            username = profile.get("username", "")
+            remote_path = profile.get("remote_path", "")
+
+            print(f"  {name}:")
+            print(f"    Protocol: {protocol.upper()}")
+            print(f"    Host: {host}:{port}")
+            print(f"    Username: {username}")
+            print(f"    Remote path: {remote_path}")
+            print("")
+
+        print(f"Profiles file: {get_deploy_profiles_path()}")
+        print("")
+        print("Commands:")
+        print("  st8 profile add <name> ...  # Add a new profile")
+        print("  st8 profile remove <name>   # Remove a profile")
+        print("  st8 profile show <name>     # Show profile details")
+        return 0
+
+    elif subcommand == "add":
+        # Add a new profile
+        name = args.name
+        if not name:
+            print("Error: Profile name is required.", file=sys.stderr)
+            return 1
+
+        # Build profile from arguments
+        profile = {
+            "protocol": args.protocol or "ftp",
+            "host": args.host or "",
+            "port": args.port or (21 if (args.protocol or "ftp") == "ftp" else 22),
+            "username": args.username or "",
+            "password": args.password or "",
+            "remote_path": args.remote_path or ""
+        }
+
+        # Validate required fields
+        if not profile["host"]:
+            print("Error: --host is required.", file=sys.stderr)
+            return 1
+        if not profile["username"]:
+            print("Error: --username is required.", file=sys.stderr)
+            return 1
+
+        add_deploy_profile(name, profile)
+        print(f"Added deploy profile: {name}")
+        print(f"  Protocol: {profile['protocol'].upper()}")
+        print(f"  Host: {profile['host']}:{profile['port']}")
+        print(f"  Username: {profile['username']}")
+        print(f"  Remote path: {profile['remote_path']}")
+        print("")
+        print(f"Profiles file: {get_deploy_profiles_path()}")
+        return 0
+
+    elif subcommand == "remove":
+        name = args.name
+        if not name:
+            print("Error: Profile name is required.", file=sys.stderr)
+            return 1
+
+        if remove_deploy_profile(name):
+            print(f"Removed deploy profile: {name}")
+        else:
+            print(f"Profile not found: {name}", file=sys.stderr)
+            return 1
+        return 0
+
+    elif subcommand == "show":
+        name = args.name
+        if not name:
+            print("Error: Profile name is required.", file=sys.stderr)
+            return 1
+
+        profile = get_deploy_profile(name)
+        if not profile:
+            print(f"Profile not found: {name}", file=sys.stderr)
+            return 1
+
+        print(f"Deploy Profile: {name}")
+        print("-" * 40)
+        print(json.dumps(profile, indent=2))
+        return 0
+
+    else:
+        print(f"Unknown profile command: {subcommand}", file=sys.stderr)
+        return 1
+
+
 # =============================================================================
 # CLI Setup
 # =============================================================================
@@ -4665,6 +4930,33 @@ def main():
     global_parser.add_argument("--export", help="Export to JSON file")
     global_parser.add_argument("--verbose", "-v", action="store_true", help="Show recent tasks per project")
     global_parser.set_defaults(func=cmd_global)
+
+    # profile - manage global deploy profiles
+    profile_parser = subparsers.add_parser("profile", help="Manage global deploy profiles")
+    profile_parser.set_defaults(func=cmd_profile)
+    profile_subparsers = profile_parser.add_subparsers(dest="profile_command", help="Profile subcommands")
+
+    # profile list
+    profile_list_parser = profile_subparsers.add_parser("list", help="List all deploy profiles")
+
+    # profile add
+    profile_add_parser = profile_subparsers.add_parser("add", help="Add a new deploy profile")
+    profile_add_parser.add_argument("name", help="Profile name")
+    profile_add_parser.add_argument("--protocol", "-p", choices=["ftp", "ssh"], default="ftp",
+                                    help="Protocol (ftp or ssh, default: ftp)")
+    profile_add_parser.add_argument("--host", "-H", required=True, help="Remote host")
+    profile_add_parser.add_argument("--port", "-P", type=int, help="Port (default: 21 for FTP, 22 for SSH)")
+    profile_add_parser.add_argument("--username", "-u", required=True, help="Username")
+    profile_add_parser.add_argument("--password", "-w", default="", help="Password (for FTP)")
+    profile_add_parser.add_argument("--remote-path", "-r", default="", help="Remote deployment path")
+
+    # profile remove
+    profile_remove_parser = profile_subparsers.add_parser("remove", help="Remove a deploy profile")
+    profile_remove_parser.add_argument("name", help="Profile name to remove")
+
+    # profile show
+    profile_show_parser = profile_subparsers.add_parser("show", help="Show a deploy profile details")
+    profile_show_parser.add_argument("name", help="Profile name to show")
 
     # prompt
     prompt_parser = subparsers.add_parser("prompt", help="AI-assisted development workflow")
